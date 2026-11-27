@@ -160,7 +160,7 @@ async function doWipe() {
     <div class="card">
       <div class="card-h"><div class="card-t inline-flex items-center gap-2"><FlaskConical class="w-4 h-4 text-violet-600" />البيانات التجريبية</div></div>
       <div class="p-4 space-y-3">
-        <p class="text-sm text-slate-600 leading-6">بيانات وهمية بالكامل (12 منتجاً، 6 مذاخر، 3 قوائم أسعار، ومتابعات تشمل المثال الاختباري 10,000 / 21% / 8,900). كل سجل معلَّم كتجريبي ويمكن إخفاؤه أو حذفه دون التأثير على بياناتك.</p>
+        <p class="text-sm text-slate-600 leading-6">بيانات وهمية بالكامل (13 منتجاً بأنواع علاج وتغليف مختلفة، 6 مذاخر، 3 قوائم أسعار، ومتابعات تشمل المثال الاختباري 10,000 / 21% / 8,900). كل سجل معلَّم كتجريبي ويمكن إخفاؤه أو حذفه دون التأثير على بياناتك.</p>
         <label class="inline-flex items-center gap-2 text-sm"><input type="checkbox" :checked="s.showDemo" class="rounded border-slate-300" @change="toggleDemo($event.target.checked)" />إظهار البيانات التجريبية في التطبيق</label>
         <div class="flex flex-wrap gap-2">
           <button class="btn-secondary" :disabled="busy || store.hasDemo.value" @click="doLoadDemo"><FlaskConical class="w-4 h-4" />{{ busy ? 'جارٍ التحميل…' : 'تحميل البيانات التجريبية' }}</button>

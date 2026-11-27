@@ -4,6 +4,7 @@ import { db } from '../db/index.js'
 import { getSettings, DEFAULT_SETTINGS } from '../db/repo.js'
 import { enrich } from '../lib/analytics.js'
 import { classify } from '../lib/calc.js'
+import { displayName } from '../lib/catalog.js'
 
 const TABLES = ['products', 'distributors', 'priceBatches', 'batchProducts', 'distributorDiscounts', 'priceMonitoring', 'priceHistory']
 
@@ -47,7 +48,10 @@ const monitoring = computed(() =>
   vis(state.raw.priceMonitoring).map((m) => {
     const e = enrich(m)
     e.category = classify(e, state.settings.classification)
-    e.productName = productMap.value.get(m.productId)?.name || '—'
+    const prod = productMap.value.get(m.productId)
+    e.productName = prod ? displayName(prod) : '—'
+    e.dosageForm = prod?.dosageForm || ''
+    e.packaging = prod?.packaging || ''
     e.distributorName = distributorMap.value.get(m.distributorId)?.name || '—'
     e.batchName = batchMap.value.get(m.batchId)?.name || '—'
     return e

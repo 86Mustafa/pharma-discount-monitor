@@ -12,9 +12,11 @@ import { toast, toastError, confirm } from '../composables/ui.js'
 import { saveProduct, deleteProduct, PRODUCT_STATUS } from '../db/repo.js'
 import { fmtMoney } from '../lib/format.js'
 import { exportExcel } from '../lib/excel.js'
+import { DOSAGE_FORMS, PACKAGING, formLabel, packagingLabel, compareFormPackaging } from '../lib/catalog.js'
 
 const { products, settings, monitoring } = useStore()
-const filters = reactive({ status: '', group: '', manufacturer: '' })
+const filters = reactive({ status: '', group: '', manufacturer: '', form: '', packaging: '' })
+const formOptions = computed(() => [...new Set([...DOSAGE_FORMS, ...products.value.map((p) => p.dosageForm).filter(Boolean)])])
 const groups = computed(() => [...new Set(products.value.map((p) => p.group).filter(Boolean))].sort())
 const manufacturers = computed(() => [...new Set(products.value.map((p) => p.manufacturer).filter(Boolean))].sort())
 const counts = computed(() => {
@@ -24,12 +26,13 @@ const counts = computed(() => {
 })
 const rows = computed(() =>
   products.value
-    .filter((p) => (!filters.status || p.status === filters.status) && (!filters.group || p.group === filters.group) && (!filters.manufacturer || p.manufacturer === filters.manufacturer))
-    .map((p) => ({ ...p, followups: counts.value.get(p.id) || 0 })),
+    .filter((p) => (!filters.form || formLabel(p.dosageForm) === filters.form) && (!filters.packaging || (p.packaging || 'none') === filters.packaging) && (!filters.status || p.status === filters.status) && (!filters.group || p.group === filters.group) && (!filters.manufacturer || p.manufacturer === filters.manufacturer))
+    .map((p) => ({ ...p, followups: counts.value.get(p.id) || 0, formText: formLabel(p.dosageForm), packagingText: packagingLabel(p.packaging) }))
+    .sort(compareFormPackaging),
 )
-const table = useTable(rows, { search: ['name', 'scientificName', 'manufacturer', 'group', 'dosageForm'], sortKey: 'name' })
+const table = useTable(rows, { search: ['name', 'scientificName', 'manufacturer', 'group', 'dosageForm', 'packagingText'] })
 
-const empty = () => ({ id: null, name: '', scientificName: '', manufacturer: '', dosageForm: '', packSize: '', originalPrice: '', group: '', notes: '', status: 'active' })
+const empty = () => ({ id: null, name: '', scientificName: '', manufacturer: '', dosageForm: '', packaging: '', packSize: '', originalPrice: '', group: '', notes: '', status: 'active' })
 const form = ref(empty())
 const open = ref(false)
 const err = ref('')
@@ -60,7 +63,7 @@ function exportRows() {
   exportExcel('المنتجات', [{
     name: 'المنتجات',
     rows: table.filtered.value.map((p) => ({
-      'المعرف': p.id, 'اسم الدواء': p.name, 'الاسم العلمي': p.scientificName, 'الشركة المصنعة': p.manufacturer, 'الشكل الدوائي': p.dosageForm,
+      'المعرف': p.id, 'اسم الدواء': p.name, 'الاسم العلمي': p.scientificName, 'الشركة المصنعة': p.manufacturer, 'نوع العلاج': formLabel(p.dosageForm), 'التغليف': packagingLabel(p.packaging),
       'حجم العبوة': p.packSize, 'السعر الأصلي': p.originalPrice, 'المجموعة الدوائية': p.group, 'الحالة': PRODUCT_STATUS[p.status] || p.status,
       'عدد المتابعات': p.followups, 'ملاحظات': p.notes, 'بيانات تجريبية': p.isDemo ? 'نعم' : '',
     })),
@@ -80,8 +83,10 @@ function exportRows() {
     </div>
 
     <div class="card">
-      <div class="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 border-b border-slate-100">
+      <div class="p-3 grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-2 border-b border-slate-100">
         <SearchInput v-model="table.q.value" placeholder="بحث بالاسم، الاسم العلمي، الشركة…" />
+        <select v-model="filters.form" class="input"><option value="">كل أنواع العلاج</option><option v-for="f in formOptions" :key="f">{{ f }}</option><option>غير محدد</option></select>
+        <select v-model="filters.packaging" class="input"><option value="">مغلف وبدون غلاف</option><option v-for="(l, k) in PACKAGING" :key="k" :value="k">{{ l }}</option><option value="none">تغليف غير محدد</option></select>
         <select v-model="filters.group" class="input"><option value="">كل المجموعات</option><option v-for="g in groups" :key="g">{{ g }}</option></select>
         <select v-model="filters.manufacturer" class="input"><option value="">كل الشركات المصنعة</option><option v-for="g in manufacturers" :key="g">{{ g }}</option></select>
         <select v-model="filters.status" class="input"><option value="">كل الحالات</option><option v-for="(l, k) in PRODUCT_STATUS" :key="k" :value="k">{{ l }}</option></select>
@@ -98,7 +103,8 @@ function exportRows() {
             <SortTh k="name" :table="table">اسم الدواء</SortTh>
             <SortTh k="scientificName" :table="table">الاسم العلمي</SortTh>
             <SortTh k="manufacturer" :table="table" class="hidden md:table-cell">الشركة المصنعة</SortTh>
-            <th class="hidden lg:table-cell">الشكل / العبوة</th>
+            <SortTh k="formText" :table="table">نوع العلاج</SortTh>
+            <SortTh k="packagingText" :table="table">التغليف</SortTh>
             <SortTh k="group" :table="table" class="hidden lg:table-cell">المجموعة</SortTh>
             <SortTh k="originalPrice" :table="table" num>السعر الأصلي</SortTh>
             <SortTh k="followups" :table="table" num class="hidden sm:table-cell">المتابعات</SortTh>
@@ -109,7 +115,8 @@ function exportRows() {
               <td class="font-medium"><router-link :to="`/products/${p.id}`" class="text-slate-900 hover:text-brand-700">{{ p.name }}</router-link> <span v-if="p.isDemo" class="chip-demo">تجريبي</span></td>
               <td class="text-slate-500">{{ p.scientificName || '—' }}</td>
               <td class="hidden md:table-cell text-slate-500">{{ p.manufacturer || '—' }}</td>
-              <td class="hidden lg:table-cell text-slate-500">{{ [p.dosageForm, p.packSize].filter(Boolean).join(' · ') || '—' }}</td>
+              <td class="text-slate-600">{{ p.formText }}<div v-if="p.packSize" class="text-xs text-slate-400">{{ p.packSize }}</div></td>
+              <td><span :class="['badge', p.packaging === 'wrapped' ? 'bg-blue-50 text-blue-700 ring-blue-200' : p.packaging === 'unwrapped' ? 'bg-amber-50 text-amber-800 ring-amber-200' : 'bg-slate-50 text-slate-400 ring-slate-200']">{{ p.packagingText }}</span></td>
               <td class="hidden lg:table-cell text-slate-500">{{ p.group || '—' }}</td>
               <td class="num font-medium">{{ fmtMoney(p.originalPrice) }}</td>
               <td class="num hidden sm:table-cell">{{ p.followups }}</td>
@@ -131,7 +138,13 @@ function exportRows() {
         <div class="sm:col-span-2"><label class="label">اسم الدواء *</label><input v-model="form.name" class="input" required autofocus /><p class="text-xs text-slate-400 mt-1">يُحفظ الاسم كما تُدخله تماماً.</p></div>
         <div><label class="label">الاسم العلمي</label><input v-model="form.scientificName" class="input" dir="auto" /></div>
         <div><label class="label">الشركة المصنعة</label><input v-model="form.manufacturer" class="input" list="mf-list" /><datalist id="mf-list"><option v-for="m in manufacturers" :key="m" :value="m" /></datalist></div>
-        <div><label class="label">الشكل الدوائي</label><input v-model="form.dosageForm" class="input" list="df-list" placeholder="أقراص، كبسول، شراب…" /><datalist id="df-list"><option v-for="d in ['أقراص','كبسول','شراب','حقن','فيال حقن','مرهم','كريم','قطرة','بخاخ','تحاميل']" :key="d" :value="d" /></datalist></div>
+        <div><label class="label">نوع العلاج</label>
+          <select v-model="form.dosageForm" class="input"><option value="">— غير محدد —</option><option v-for="f in formOptions" :key="f" :value="f">{{ f }}</option></select></div>
+        <div><label class="label">نوع التغليف</label>
+          <div class="grid grid-cols-2 gap-2">
+            <button v-for="(l, k) in PACKAGING" :key="k" type="button" @click="form.packaging = form.packaging === k ? '' : k" :class="['rounded-lg border px-3 py-2 text-sm transition', form.packaging === k ? 'border-brand-600 bg-brand-50 text-brand-700 font-semibold' : 'border-slate-300 text-slate-600 hover:bg-slate-50']">{{ l }}</button>
+          </div>
+          <p class="text-xs text-slate-400 mt-1">المغلف وغير المغلف يُسجَّلان كمنتجين منفصلين لاختلاف السعر.</p></div>
         <div><label class="label">حجم العبوة</label><input v-model="form.packSize" class="input" /></div>
         <div><label class="label">السعر الأصلي ({{ settings.currency }}) *</label><input v-model="form.originalPrice" class="input ltr text-right" type="number" min="0.01" step="any" required /></div>
         <div><label class="label">المجموعة الدوائية</label><input v-model="form.group" class="input" list="gr-list" /><datalist id="gr-list"><option v-for="g in groups" :key="g" :value="g" /></datalist></div>

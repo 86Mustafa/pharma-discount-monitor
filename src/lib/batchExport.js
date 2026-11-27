@@ -2,6 +2,7 @@ import { exportExcel } from './excel.js'
 import { monitoringRow } from './reports.js'
 import { BATCH_TYPES } from '../db/repo.js'
 import { round } from './calc.js'
+import { compareFormPackaging, formLabel, packagingLabel } from './catalog.js'
 
 /** تصدير قائمة أسعار كاملة: البيانات العامة + المنتجات + خصومات المذاخر + المتابعات */
 export function exportBatch(batchId, store) {
@@ -17,8 +18,13 @@ export function exportBatch(batchId, store) {
     },
     {
       name: 'المنتجات',
-      rows: items.map((i) => ({
-        'المنتج': store.productMap.value.get(i.productId)?.name || '',
+      rows: items
+        .map((i) => ({ i, p: store.productMap.value.get(i.productId) || {} }))
+        .sort((a, b) => compareFormPackaging(a.p, b.p) || String(a.p.name).localeCompare(String(b.p.name), 'ar'))
+        .map(({ i, p }) => ({
+        'نوع العلاج': formLabel(p.dosageForm),
+        'التغليف': packagingLabel(p.packaging),
+        'المنتج': p.name || '',
         'الاسم العلمي': store.productMap.value.get(i.productId)?.scientificName || '',
         'السعر الأصلي': i.originalPrice,
         'خصم الشركة %': i.companyDiscount,

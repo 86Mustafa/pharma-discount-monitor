@@ -2,6 +2,7 @@ import { exportExcel } from './excel.js'
 import { latestByPair, byDateDesc } from './analytics.js'
 import { round } from './calc.js'
 import { PRICE_SOURCES } from '../db/repo.js'
+import { formLabel, packagingLabel } from './catalog.js'
 
 const r2 = (n) => (Number.isFinite(n) ? round(n, 2) : '')
 
@@ -11,6 +12,8 @@ export function monitoringRow(e) {
     'التاريخ': e.date,
     'المذخر': e.distributorName,
     'المنتج': e.productName,
+    'نوع العلاج': formLabel(e.dosageForm),
+    'التغليف': packagingLabel(e.packaging),
     'قائمة الأسعار / الطلبية': e.batchName,
     'السعر الأصلي': e.originalPrice,
     'خصم الشركة %': r2(e.companyDiscount),

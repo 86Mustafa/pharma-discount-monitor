@@ -95,3 +95,32 @@ describe('البيانات التجريبية', () => {
     expect(await db.priceBatches.count()).toBe(1)
   })
 })
+
+import { groupByFormPackaging, parsePackaging, displayName } from '../src/lib/catalog.js'
+
+describe('نوع العلاج والتغليف', () => {
+  it('المغلف وغير المغلف منتجان مختلفان وليسا تكراراً', async () => {
+    await repo.saveProduct({ name: 'باراسيتامول', originalPrice: 2500, dosageForm: 'حبوب', packaging: 'wrapped' })
+    await repo.saveProduct({ name: 'باراسيتامول', originalPrice: 2000, dosageForm: 'حبوب', packaging: 'unwrapped' })
+    await expect(repo.saveProduct({ name: 'باراسيتامول', originalPrice: 2100, packaging: 'unwrapped' })).rejects.toThrow('يوجد منتج')
+    const all = await db.products.toArray()
+    expect(all.map((p) => p.packaging).sort()).toEqual(['unwrapped', 'wrapped'])
+    expect(displayName(all.find((p) => p.packaging === 'unwrapped'))).toBe('باراسيتامول (بدون غلاف)')
+  })
+  it('يجمّع حسب نوع العلاج ثم التغليف بالترتيب المحدد', () => {
+    const g = groupByFormPackaging([
+      { id: 1, dosageForm: 'قطرة', packaging: 'wrapped' },
+      { id: 2, dosageForm: 'شراب', packaging: 'unwrapped' },
+      { id: 3, dosageForm: 'شراب', packaging: 'wrapped' },
+      { id: 4, dosageForm: '', packaging: '' },
+      { id: 5, dosageForm: 'حبوب', packaging: 'wrapped' },
+    ])
+    expect(g.map((x) => x.label)).toEqual(['شراب — مغلف', 'شراب — بدون غلاف', 'حبوب — مغلف', 'قطرة — مغلف', 'غير محدد — غير محدد'])
+  })
+  it('يقرأ التغليف من نص Excel', () => {
+    expect(parsePackaging('مغلف')).toBe('wrapped')
+    expect(parsePackaging('بدون غلاف')).toBe('unwrapped')
+    expect(parsePackaging('غير مغلف')).toBe('unwrapped')
+    expect(parsePackaging('')).toBe('')
+  })
+})

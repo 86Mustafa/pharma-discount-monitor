@@ -65,11 +65,13 @@ export async function setSetting(key, value) {
 
 export const PRODUCT_STATUS = { active: 'فعّال', inactive: 'غير فعّال', discontinued: 'متوقف' }
 
-export async function findDuplicateProduct({ name, packSize }, excludeId) {
-  const key = nameKey(name)
-  const pack = nameKey(packSize)
+/** مفتاح التكرار: الاسم + حجم العبوة + نوع التغليف (المغلف وغير المغلف منتجان مختلفان) */
+export const productKey = (p) => `${nameKey(p.name)}|${nameKey(p.packSize)}|${p.packaging || ''}`
+
+export async function findDuplicateProduct({ name, packSize, packaging }, excludeId) {
+  const key = productKey({ name, packSize, packaging })
   const all = await db.products.toArray()
-  return all.find((p) => p.id !== excludeId && nameKey(p.name) === key && nameKey(p.packSize) === pack) || null
+  return all.find((p) => p.id !== excludeId && productKey(p) === key) || null
 }
 
 export async function saveProduct(input, { allowDuplicate = false } = {}) {
@@ -78,8 +80,8 @@ export async function saveProduct(input, { allowDuplicate = false } = {}) {
   const priceErr = validateOriginalPrice(input.originalPrice)
   if (priceErr.length) throw new ValidationError(priceErr[0])
   if (!allowDuplicate) {
-    const dup = await findDuplicateProduct({ name, packSize: input.packSize }, input.id)
-    if (dup) throw new ValidationError(`يوجد منتج بنفس الاسم وحجم العبوة: «${dup.name}»`, 'duplicate')
+    const dup = await findDuplicateProduct({ name, packSize: input.packSize, packaging: input.packaging }, input.id)
+    if (dup) throw new ValidationError(`يوجد منتج بنفس الاسم وحجم العبوة ونوع التغليف: «${dup.name}»`, 'duplicate')
   }
   const record = {
     // الاسم يُحفظ كما أُدخل حرفياً (بعد إزالة المسافات الطرفية فقط)
@@ -88,6 +90,7 @@ export async function saveProduct(input, { allowDuplicate = false } = {}) {
     manufacturer: clean(input.manufacturer),
     dosageForm: clean(input.dosageForm),
     packSize: clean(input.packSize),
+    packaging: input.packaging === 'wrapped' || input.packaging === 'unwrapped' ? input.packaging : '',
     originalPrice: toNumber(input.originalPrice),
     group: clean(input.group),
     notes: clean(input.notes),

@@ -12,6 +12,7 @@ import { latestByPair, avg, byDateDesc } from '../lib/analytics.js'
 import { round } from '../lib/calc.js'
 import { fmtMoney, fmtPct } from '../lib/format.js'
 import { exportMonitoring } from '../lib/reports.js'
+import { PACKAGING } from '../lib/catalog.js'
 import { barOptions, lineOptions, priceByDistributorData, priceOverTimeData } from '../lib/charts.js'
 
 const route = useRoute()
@@ -71,7 +72,7 @@ const printPage = () => window.print()
     <div class="flex flex-wrap items-start justify-between gap-3 no-print">
       <div>
         <router-link to="/products" class="text-sm text-slate-500 hover:text-slate-800 inline-flex items-center gap-1"><ArrowRight class="w-4 h-4" />الأدوية</router-link>
-        <h1 class="page-title mt-1">{{ product.name }} <span v-if="product.isDemo" class="chip-demo align-middle">تجريبي</span></h1>
+        <h1 class="page-title mt-1">{{ product.name }} <span v-if="PACKAGING[product.packaging]" :class="['badge align-middle', product.packaging === 'wrapped' ? 'bg-blue-50 text-blue-700 ring-blue-200' : 'bg-amber-50 text-amber-800 ring-amber-200']">{{ PACKAGING[product.packaging] }}</span> <span v-if="product.isDemo" class="chip-demo align-middle">تجريبي</span></h1>
         <p class="page-sub">{{ [product.scientificName, product.dosageForm, product.packSize, product.manufacturer].filter(Boolean).join(' · ') }}</p>
       </div>
       <div class="flex flex-wrap gap-2">

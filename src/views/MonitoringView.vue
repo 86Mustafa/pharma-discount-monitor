@@ -18,6 +18,7 @@ import { computeDiscount, classify, resolveCompanyDiscount } from '../lib/calc.j
 import { byDateDesc } from '../lib/analytics.js'
 import { fmtMoney, fmtPct, fmtSigned, fmtDate, fmtDateTime, todayISO } from '../lib/format.js'
 import { exportMonitoring } from '../lib/reports.js'
+import { displayName, formLabel, packagingLabel } from '../lib/catalog.js'
 
 const route = useRoute()
 const store = useStore()
@@ -40,7 +41,7 @@ const distOptions = computed(() => distributors.value.map((d) => ({ value: d.id,
 const batchItems = computed(() => batchProducts.value.filter((b) => b.batchId === form.batchId))
 const productOptions = computed(() =>
   batchItems.value
-    .map((b) => ({ value: b.productId, label: productMap.value.get(b.productId)?.name || '—', sub: `السعر الأصلي ${fmtMoney(b.originalPrice)} · خصم ${fmtPct(b.companyDiscount)}` }))
+    .map((b) => ({ value: b.productId, label: displayName(productMap.value.get(b.productId)), sub: `${formLabel(productMap.value.get(b.productId)?.dosageForm)} · ${packagingLabel(productMap.value.get(b.productId)?.packaging)} · السعر الأصلي ${fmtMoney(b.originalPrice)} · خصم ${fmtPct(b.companyDiscount)}` }))
     .sort((a, b) => a.label.localeCompare(b.label, 'ar')),
 )
 watch(() => form.batchId, () => { if (form.productId && !batchItems.value.some((b) => b.productId === form.productId)) form.productId = null })

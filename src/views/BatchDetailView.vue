@@ -15,6 +15,9 @@ import { distributorPurchasePrice, validateDiscount, validateOriginalPrice } fro
 import { avg } from '../lib/analytics.js'
 import { fmtMoney, fmtPct } from '../lib/format.js'
 import { exportBatch } from '../lib/batchExport.js'
+import { groupByFormPackaging, PACKAGING, formLabel, displayName } from '../lib/catalog.js'
+import SearchInput from '../components/SearchInput.vue'
+import { ChevronDown } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -25,10 +28,20 @@ const batch = computed(() => batchMap.value.get(id))
 const items = computed(() =>
   batchProducts.value.filter((b) => b.batchId === id).map((b) => {
     const mons = monitoring.value.filter((m) => m.batchId === id && m.productId === b.productId)
-    return { ...b, name: productMap.value.get(b.productId)?.name || '—', followups: mons.length, avgReflected: avg(mons.map((m) => m.pharmacyDiscountPct)), avgRemaining: avg(mons.map((m) => m.remainingDiscountPct)) }
+    const prod = productMap.value.get(b.productId)
+    return { ...b, name: prod ? displayName(prod) : '—', dosageForm: prod?.dosageForm || '', packaging: prod?.packaging || '', followups: mons.length, avgReflected: avg(mons.map((m) => m.pharmacyDiscountPct)), avgRemaining: avg(mons.map((m) => m.remainingDiscountPct)) }
   }),
 )
 const table = useTable(items, { search: ['name'], sortKey: 'name' })
+/* تصنيف حسب نوع العلاج ثم التغليف */
+const gf = ref({ form: '', packaging: '' })
+const allGroups = computed(() => groupByFormPackaging(items.value))
+const formChips = computed(() => [...new Set(allGroups.value.map((g) => g.form))])
+const groups = computed(() =>
+  groupByFormPackaging(table.filtered.value).filter((g) => (!gf.value.form || g.form === gf.value.form) && (!gf.value.packaging || (g.packaging || 'none') === gf.value.packaging)),
+)
+const collapsed = ref(new Set())
+const toggleGroup = (k) => { const s = new Set(collapsed.value); s.has(k) ? s.delete(k) : s.add(k); collapsed.value = s }
 const ovr = computed(() => overrides.value.filter((o) => o.batchId === id))
 const followups = computed(() => monitoring.value.filter((m) => m.batchId === id).length)
 
@@ -41,7 +54,7 @@ async function saveMeta() {
 /* منتج */
 const item = ref(null)
 const itemErr = ref('')
-const itemOptions = computed(() => products.value.filter((p) => !items.value.some((i) => i.productId === p.id)).map((p) => ({ value: p.id, label: p.name })))
+const itemOptions = computed(() => products.value.filter((p) => !items.value.some((i) => i.productId === p.id)).map((p) => ({ value: p.id, label: displayName(p), sub: formLabel(p.dosageForm) })))
 function newItem() { item.value = { isNew: true, productId: null, originalPrice: '', companyDiscount: batch.value?.defaultDiscount ?? '' }; itemErr.value = '' }
 function editItem(i) { item.value = { ...i, isNew: false }; itemErr.value = '' }
 function onPickProduct(pid) { const p = productMap.value.get(pid); if (p && !item.value.originalPrice) item.value.originalPrice = p.originalPrice }
@@ -108,7 +121,20 @@ const print = () => window.print()
     </div>
 
     <div class="card">
-      <div class="card-h"><div class="card-t">المنتجات والأسعار</div><button class="btn-secondary btn-sm no-print" @click="newItem"><Plus class="w-4 h-4" />إضافة منتج</button></div>
+      <div class="card-h"><div class="card-t">المنتجات والأسعار <span class="text-sm font-normal text-slate-400">مصنفة حسب نوع العلاج والتغليف</span></div><button class="btn-secondary btn-sm no-print" @click="newItem"><Plus class="w-4 h-4" />إضافة منتج</button></div>
+      <div v-if="items.length" class="p-3 space-y-2 border-b border-slate-100 no-print">
+        <div class="flex flex-wrap items-center gap-1.5">
+          <span class="text-xs text-slate-500 ml-1">نوع العلاج:</span>
+          <button :class="['rounded-full px-3 py-1 text-xs border', !gf.form ? 'bg-brand-600 text-white border-brand-600' : 'bg-white border-slate-300 text-slate-600']" @click="gf.form = ''">الكل</button>
+          <button v-for="f in formChips" :key="f" :class="['rounded-full px-3 py-1 text-xs border', gf.form === f ? 'bg-brand-600 text-white border-brand-600' : 'bg-white border-slate-300 text-slate-600']" @click="gf.form = gf.form === f ? '' : f">{{ f }} <span class="opacity-70">({{ allGroups.filter((g) => g.form === f).reduce((n, g) => n + g.rows.length, 0) }})</span></button>
+        </div>
+        <div class="flex flex-wrap items-center gap-1.5">
+          <span class="text-xs text-slate-500 ml-1">التغليف:</span>
+          <button :class="['rounded-full px-3 py-1 text-xs border', !gf.packaging ? 'bg-brand-600 text-white border-brand-600' : 'bg-white border-slate-300 text-slate-600']" @click="gf.packaging = ''">الكل</button>
+          <button v-for="(l, k) in PACKAGING" :key="k" :class="['rounded-full px-3 py-1 text-xs border', gf.packaging === k ? 'bg-brand-600 text-white border-brand-600' : 'bg-white border-slate-300 text-slate-600']" @click="gf.packaging = gf.packaging === k ? '' : k">{{ l }}</button>
+          <SearchInput v-model="table.q.value" class="w-full sm:w-64 sm:mr-auto" placeholder="بحث عن منتج في القائمة…" />
+        </div>
+      </div>
       <EmptyState v-if="!items.length" title="القائمة فارغة" />
       <div v-else class="overflow-x-auto">
         <table class="tbl">
@@ -122,9 +148,20 @@ const print = () => window.print()
             <SortTh k="avgRemaining" :table="table" num>متوسط المتبقي</SortTh>
             <th class="no-print"></th>
           </tr></thead>
-          <tbody>
-            <tr v-for="i in table.filtered.value" :key="i.id">
-              <td class="font-medium"><router-link :to="`/products/${i.productId}`" class="hover:text-brand-700">{{ i.name }}</router-link></td>
+          <tbody v-for="g in groups" :key="g.key">
+            <tr class="bg-slate-100/80 hover:bg-slate-100 cursor-pointer" @click="toggleGroup(g.key)">
+              <td colspan="8" class="!py-2 font-semibold text-slate-700">
+                <span class="inline-flex items-center gap-2">
+                  <ChevronDown :class="['w-4 h-4 transition no-print', collapsed.has(g.key) && 'rotate-90']" />
+                  {{ g.form }}
+                  <span :class="['badge', g.packaging === 'wrapped' ? 'bg-blue-50 text-blue-700 ring-blue-200' : g.packaging === 'unwrapped' ? 'bg-amber-50 text-amber-800 ring-amber-200' : 'bg-white text-slate-500 ring-slate-200']">{{ PACKAGING[g.packaging] || 'تغليف غير محدد' }}</span>
+                  <span class="text-xs font-normal text-slate-500">{{ g.rows.length }} منتج · متوسط خصم الشركة {{ fmtPct(avg(g.rows.map((r) => r.companyDiscount)), settings.pctDecimals) }}</span>
+                </span>
+              </td>
+            </tr>
+            <template v-if="!collapsed.has(g.key)">
+            <tr v-for="i in g.rows" :key="i.id">
+              <td class="font-medium pr-8"><router-link :to="`/products/${i.productId}`" class="hover:text-brand-700">{{ i.name }}</router-link></td>
               <td class="num">{{ fmtMoney(i.originalPrice) }}</td>
               <td class="num">{{ fmtPct(i.companyDiscount, settings.pctDecimals) }}</td>
               <td class="num font-medium">{{ fmtMoney(i.purchasePrice) }}</td>
@@ -132,11 +169,13 @@ const print = () => window.print()
               <td class="num">{{ fmtPct(i.avgReflected, settings.pctDecimals) }}</td>
               <td :class="['num', i.avgRemaining < 0 && 'text-red-600']">{{ fmtPct(i.avgRemaining, settings.pctDecimals) }}</td>
               <td class="no-print whitespace-nowrap text-left">
-                <button class="icon-btn" @click="editItem(i)"><Pencil class="w-4 h-4" /></button>
+                <button class="icon-btn" title="تعديل السعر والخصم" @click="editItem(i)"><Pencil class="w-4 h-4" /></button>
                 <button class="icon-btn hover:text-red-600" @click="removeItem(i)"><Trash2 class="w-4 h-4" /></button>
               </td>
             </tr>
+            </template>
           </tbody>
+          <tbody v-if="!groups.length"><tr><td colspan="8" class="text-center text-slate-400 py-8">لا توجد منتجات مطابقة للتصنيف المحدد</td></tr></tbody>
         </table>
       </div>
     </div>

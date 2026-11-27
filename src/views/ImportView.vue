@@ -6,7 +6,8 @@ import { useStore } from '../composables/store.js'
 import { toast, toastError } from '../composables/ui.js'
 import { readWorkbook, guessMapping, downloadTemplate } from '../lib/excel.js'
 import { toNumber, validateDiscount, validateOriginalPrice, distributorPurchasePrice, round } from '../lib/calc.js'
-import { createBatch, saveProduct, nameKey } from '../db/repo.js'
+import { createBatch, saveProduct, productKey } from '../db/repo.js'
+import { parsePackaging, packagingLabel, DOSAGE_FORMS } from '../lib/catalog.js'
 import { fmtMoney, fmtPct, todayISO } from '../lib/format.js'
 import { db } from '../db/index.js'
 
@@ -22,7 +23,8 @@ const FIELDS = {
   discount: { label: 'الخصم %', aliases: ['الخصم', 'خصم', 'discount', 'نسبة الخصم', 'disc', 'خصم الشركة'], batchOnly: true },
   scientificName: { label: 'الاسم العلمي', aliases: ['scientific', 'generic', 'المادة الفعالة', 'scientific name'] },
   manufacturer: { label: 'الشركة المصنعة', aliases: ['الشركة', 'المصنع', 'manufacturer', 'company'] },
-  dosageForm: { label: 'الشكل الدوائي', aliases: ['الشكل', 'form', 'dosage form'] },
+  dosageForm: { label: 'نوع العلاج', aliases: ['الشكل الدوائي', 'الشكل', 'النوع', 'form', 'dosage form', 'type'] },
+  packaging: { label: 'التغليف', aliases: ['نوع التغليف', 'الغلاف', 'مغلف', 'packaging', 'wrapped', 'wrap'] },
   packSize: { label: 'حجم العبوة', aliases: ['العبوة', 'pack', 'pack size', 'size'] },
   group: { label: 'المجموعة الدوائية', aliases: ['المجموعة', 'group', 'category', 'الفئة'] },
   notes: { label: 'ملاحظات', aliases: ['notes', 'ملاحظة'] },
@@ -60,13 +62,7 @@ const mappingOk = computed(() => fields.value.filter((f) => f.required).every((f
 const meta = reactive({ name: '', date: todayISO(), lab: '', defaultDiscount: 21, notes: '' })
 const opts = reactive({ createMissing: true, updateProductPrices: true, fractionDiscount: false, updateExisting: false })
 const cell = (r, k) => (mapping.value[k] >= 0 ? r[mapping.value[k]] : '')
-const productIndex = computed(() => {
-  const m = new Map()
-  for (const p of products.value) m.set(nameKey(p.name) + '|' + nameKey(p.packSize), p)
-  const byName = new Map()
-  for (const p of products.value) if (!byName.has(nameKey(p.name))) byName.set(nameKey(p.name), p)
-  return { m, byName }
-})
+const productIndex = computed(() => new Map(products.value.map((p) => [productKey(p), p])))
 watch(step, (s) => {
   if (s === 3 && mapping.value.discount >= 0) {
     const vals = dataRows.value.map((r) => toNumber(cell(r, 'discount'))).filter((v) => Number.isFinite(v) && v > 0)
@@ -78,6 +74,8 @@ const parsed = computed(() => {
   return dataRows.value.map((r, i) => {
     const name = String(cell(r, 'name') ?? '').trim()
     const packSize = String(cell(r, 'packSize') ?? '').trim()
+    const packaging = parsePackaging(cell(r, 'packaging'))
+    const dosageForm = String(cell(r, 'dosageForm') ?? '').trim()
     const price = toNumber(cell(r, 'originalPrice'))
     let disc = mapping.value.discount >= 0 && String(cell(r, 'discount')).trim() !== '' ? toNumber(cell(r, 'discount')) : toNumber(meta.defaultDiscount)
     if (opts.fractionDiscount && mapping.value.discount >= 0 && Number.isFinite(disc) && disc < 1) disc = round(disc * 100)
@@ -85,15 +83,16 @@ const parsed = computed(() => {
     if (!name) errors.push('اسم فارغ')
     errors.push(...validateOriginalPrice(price))
     if (mode.value === 'batch') errors.push(...validateDiscount(disc))
-    const key = nameKey(name) + '|' + nameKey(packSize)
+    // المغلف وغير المغلف منتجان مختلفان
+    const key = productKey({ name, packSize, packaging })
     const dup = name && seen.has(key)
     seen.add(key)
-    const existing = productIndex.value.m.get(key) || (mapping.value.packSize < 0 ? productIndex.value.byName.get(nameKey(name)) : null)
+    const existing = productIndex.value.get(key)
     const status = errors.length ? 'error' : dup ? 'dup' : existing ? 'match' : 'new'
     return {
-      row: i + headerRow.value + 1, name, packSize, price, disc, errors, status, existing,
+      row: i + headerRow.value + 1, name, packSize, packaging, dosageForm, price, disc, errors, status, existing,
       priceDiff: existing && Number.isFinite(price) ? round(((price - existing.originalPrice) / existing.originalPrice) * 100, 2) : null,
-      extra: { scientificName: cell(r, 'scientificName'), manufacturer: cell(r, 'manufacturer'), dosageForm: cell(r, 'dosageForm'), group: cell(r, 'group'), notes: cell(r, 'notes') },
+      extra: { scientificName: cell(r, 'scientificName'), manufacturer: cell(r, 'manufacturer'), dosageForm, group: cell(r, 'group'), notes: cell(r, 'notes') },
     }
   })
 })
@@ -117,7 +116,7 @@ async function run() {
     for (const p of importable.value) {
       let pid = p.existing?.id
       if (!pid) {
-        pid = await saveProduct({ name: p.name, packSize: p.packSize, originalPrice: p.price, status: 'active', ...p.extra }, { allowDuplicate: true })
+        pid = await saveProduct({ name: p.name, packSize: p.packSize, packaging: p.packaging, originalPrice: p.price, status: 'active', ...p.extra }, { allowDuplicate: true })
         created++
       } else if (mode.value === 'products' && opts.updateExisting) {
         const cur = await db.products.get(pid)
@@ -226,7 +225,7 @@ function reset() { step.value = 1; sheets.value = []; fileName.value = '' }
             <thead class="sticky top-0"><tr><th>صف</th><th>اسم المنتج (كما في الملف)</th><th>الحالة</th><th class="num">السعر</th><th class="num">السعر الحالي</th><th class="num">التغير</th><th v-if="mode === 'batch'" class="num">الخصم</th><th v-if="mode === 'batch'" class="num">سعر شراء المذخر</th></tr></thead>
             <tbody><tr v-for="p in reviewRows" :key="p.row">
               <td class="text-slate-400 tabular-nums">{{ p.row }}</td>
-              <td class="font-medium">{{ p.name || '—' }}<span v-if="p.packSize" class="text-xs text-slate-400"> · {{ p.packSize }}</span><div v-if="p.existing && p.existing.name !== p.name" class="text-xs text-slate-400">← {{ p.existing.name }}</div></td>
+              <td class="font-medium">{{ p.name || '—' }}<span v-if="p.packSize" class="text-xs text-slate-400"> · {{ p.packSize }}</span><div class="text-xs text-slate-500">{{ p.dosageForm || 'نوع غير محدد' }} · {{ packagingLabel(p.packaging) }}</div><div v-if="p.existing && p.existing.name !== p.name" class="text-xs text-slate-400">← {{ p.existing.name }}</div></td>
               <td><span :class="['badge', STATUS[p.status][1]]">{{ STATUS[p.status][0] }}</span><div v-if="p.errors.length" class="text-xs text-red-600 mt-0.5">{{ p.errors.join('، ') }}</div></td>
               <td class="num">{{ fmtMoney(p.price) }}</td>
               <td class="num text-slate-500">{{ p.existing ? fmtMoney(p.existing.originalPrice) : '—' }}</td>

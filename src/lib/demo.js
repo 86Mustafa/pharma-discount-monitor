@@ -19,18 +19,19 @@ function rng(seed) {
 const LAB = 'المعمل النموذجي (تجريبي)'
 
 const PRODUCTS = [
-  { name: 'دواء تجريبي', scientificName: 'Demo Substance', dosageForm: 'أقراص', packSize: '20 قرص', originalPrice: 10000, group: 'تجريبي', notes: 'المثال الاختباري الأساسي' },
-  { name: 'أموكسيل-نموذج 500', scientificName: 'Amoxicillin 500mg', dosageForm: 'كبسول', packSize: '16 كبسولة', originalPrice: 6000, group: 'مضادات حيوية' },
-  { name: 'أزيترو-نموذج 250', scientificName: 'Azithromycin 250mg', dosageForm: 'أقراص', packSize: '6 أقراص', originalPrice: 9500, group: 'مضادات حيوية' },
-  { name: 'بارا-نموذج 500', scientificName: 'Paracetamol 500mg', dosageForm: 'أقراص', packSize: '24 قرص', originalPrice: 2500, group: 'مسكنات' },
-  { name: 'أوميبرا-نموذج 20', scientificName: 'Omeprazole 20mg', dosageForm: 'كبسول', packSize: '14 كبسولة', originalPrice: 7500, group: 'جهاز هضمي' },
-  { name: 'ميتفور-نموذج 850', scientificName: 'Metformin 850mg', dosageForm: 'أقراص', packSize: '30 قرص', originalPrice: 5000, group: 'سكري' },
-  { name: 'أتورفا-نموذج 20', scientificName: 'Atorvastatin 20mg', dosageForm: 'أقراص', packSize: '30 قرص', originalPrice: 14000, group: 'قلب وأوعية' },
-  { name: 'أملو-نموذج 5', scientificName: 'Amlodipine 5mg', dosageForm: 'أقراص', packSize: '30 قرص', originalPrice: 6500, group: 'قلب وأوعية' },
-  { name: 'سيفتري-نموذج 1غم', scientificName: 'Ceftriaxone 1g', dosageForm: 'فيال حقن', packSize: '1 فيال', originalPrice: 4000, group: 'مضادات حيوية' },
-  { name: 'لوسار-نموذج 50', scientificName: 'Losartan 50mg', dosageForm: 'أقراص', packSize: '28 قرص', originalPrice: 8000, group: 'قلب وأوعية' },
-  { name: 'إيبو-نموذج شراب', scientificName: 'Ibuprofen 100mg/5ml', dosageForm: 'شراب', packSize: '100 مل', originalPrice: 3500, group: 'مسكنات' },
-  { name: 'سالبو-نموذج بخاخ', scientificName: 'Salbutamol 100mcg', dosageForm: 'بخاخ', packSize: '200 جرعة', originalPrice: 12000, group: 'جهاز تنفسي' },
+  { name: 'دواء تجريبي', scientificName: 'Demo Substance', dosageForm: 'حبوب', packaging: 'wrapped', packSize: '20 حبة', originalPrice: 10000, group: 'تجريبي', notes: 'المثال الاختباري الأساسي' },
+  { name: 'أموكسيل-نموذج معلق', scientificName: 'Amoxicillin 250mg/5ml', dosageForm: 'معلق', packaging: 'wrapped', packSize: '100 مل', originalPrice: 6000, group: 'مضادات حيوية' },
+  { name: 'أزيترو-نموذج 250', scientificName: 'Azithromycin 250mg', dosageForm: 'حبوب', packaging: 'wrapped', packSize: '6 حبات', originalPrice: 9500, group: 'مضادات حيوية' },
+  { name: 'بارا-نموذج 500', scientificName: 'Paracetamol 500mg', dosageForm: 'حبوب', packaging: 'wrapped', packSize: '24 حبة', originalPrice: 2500, group: 'مسكنات' },
+  { name: 'بارا-نموذج 500', scientificName: 'Paracetamol 500mg', dosageForm: 'حبوب', packaging: 'unwrapped', packSize: '24 حبة', originalPrice: 2000, group: 'مسكنات', notes: 'نفس المنتج بدون غلاف — سعر مختلف' },
+  { name: 'فيوسي-نموذج كريم', scientificName: 'Fusidic acid 2%', dosageForm: 'كريم', packaging: 'wrapped', packSize: '15 غم', originalPrice: 7500, group: 'جلدية' },
+  { name: 'ميتفور-نموذج 850', scientificName: 'Metformin 850mg', dosageForm: 'حبوب', packaging: 'unwrapped', packSize: '30 حبة', originalPrice: 5000, group: 'سكري' },
+  { name: 'أتورفا-نموذج 20', scientificName: 'Atorvastatin 20mg', dosageForm: 'حبوب', packaging: 'wrapped', packSize: '30 حبة', originalPrice: 14000, group: 'قلب وأوعية' },
+  { name: 'بيتا-نموذج مرهم', scientificName: 'Betamethasone 0.1%', dosageForm: 'مرهم', packaging: 'unwrapped', packSize: '30 غم', originalPrice: 6500, group: 'جلدية' },
+  { name: 'بوفي-نموذج معقم', scientificName: 'Povidone-iodine 10%', dosageForm: 'معقم', packaging: 'unwrapped', packSize: '120 مل', originalPrice: 4000, group: 'مطهرات' },
+  { name: 'كلورا-نموذج قطرة', scientificName: 'Chloramphenicol 0.5%', dosageForm: 'قطرة', packaging: 'wrapped', packSize: '10 مل', originalPrice: 8000, group: 'عيون' },
+  { name: 'إيبو-نموذج شراب', scientificName: 'Ibuprofen 100mg/5ml', dosageForm: 'شراب', packaging: 'wrapped', packSize: '100 مل', originalPrice: 3500, group: 'مسكنات' },
+  { name: 'سالبو-نموذج شراب', scientificName: 'Salbutamol 2mg/5ml', dosageForm: 'شراب', packaging: 'unwrapped', packSize: '120 مل', originalPrice: 12000, group: 'جهاز تنفسي' },
 ]
 
 const DISTRIBUTORS = [
@@ -74,7 +75,7 @@ export async function loadDemo() {
 
   for (const [bi, b] of batchesDef.entries()) {
     const items = PRODUCTS.map((p, i) => {
-      const bumped = b.priceUp && (i === 6 || i === 11 || i === 4) ? Math.round((p.originalPrice * (1 + b.priceUp)) / 250) * 250 : p.originalPrice
+      const bumped = b.priceUp && (i === 7 || i === 12 || i === 5) ? Math.round((p.originalPrice * (1 + b.priceUp)) / 250) * 250 : p.originalPrice
       // المنتج التجريبي يبقى دائماً 10,000 بخصم 21% في قائمة نوفمبر للمطابقة مع المثال
       const disc = i === 0 ? (bi === 2 ? 21 : b.discount) : b.discount
       return { productId: productIds[i], originalPrice: bumped, companyDiscount: disc }

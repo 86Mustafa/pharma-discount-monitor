@@ -11,6 +11,7 @@ import { exportDiscountReport, exportMonitoring, exportDistributorPrices } from 
 import { exportBatch } from '../lib/batchExport.js'
 import { exportExcel } from '../lib/excel.js'
 import { PRODUCT_STATUS } from '../db/repo.js'
+import { formLabel, packagingLabel } from '../lib/catalog.js'
 
 const store = useStore()
 const { monitoring, batches, distributors, products, settings } = store
@@ -45,7 +46,7 @@ function doExport() {
 }
 const exp = reactive({ batchId: '', distributorId: '' })
 function exportProducts() {
-  exportExcel('المنتجات', [{ name: 'المنتجات', rows: products.value.map((p) => ({ 'المعرف': p.id, 'اسم الدواء': p.name, 'الاسم العلمي': p.scientificName, 'الشركة المصنعة': p.manufacturer, 'الشكل الدوائي': p.dosageForm, 'حجم العبوة': p.packSize, 'السعر الأصلي': p.originalPrice, 'المجموعة الدوائية': p.group, 'الحالة': PRODUCT_STATUS[p.status], 'ملاحظات': p.notes })) }])
+  exportExcel('المنتجات', [{ name: 'المنتجات', rows: products.value.map((p) => ({ 'المعرف': p.id, 'اسم الدواء': p.name, 'الاسم العلمي': p.scientificName, 'الشركة المصنعة': p.manufacturer, 'نوع العلاج': formLabel(p.dosageForm), 'التغليف': packagingLabel(p.packaging), 'حجم العبوة': p.packSize, 'السعر الأصلي': p.originalPrice, 'المجموعة الدوائية': p.group, 'الحالة': PRODUCT_STATUS[p.status], 'ملاحظات': p.notes })) }])
 }
 const printPage = () => window.print()
 </script>
