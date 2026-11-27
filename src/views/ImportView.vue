@@ -6,30 +6,37 @@ import { useStore } from '../composables/store.js'
 import { toast, toastError } from '../composables/ui.js'
 import { readWorkbook, guessMapping, downloadTemplate } from '../lib/excel.js'
 import { toNumber, validateDiscount, validateOriginalPrice, distributorPurchasePrice, round } from '../lib/calc.js'
-import { createBatch, saveProduct, productKey } from '../db/repo.js'
-import { parsePackaging, packagingLabel, DOSAGE_FORMS } from '../lib/catalog.js'
+import { createBatch, saveProduct, productKey, nameKey, saveDistributor, addMonitoring, PRICE_SOURCES } from '../db/repo.js'
+import { computeDiscount, resolveCompanyDiscount } from '../lib/calc.js'
+import { parsePackaging, packagingLabel, DOSAGE_FORMS, displayName } from '../lib/catalog.js'
 import { fmtMoney, fmtPct, todayISO } from '../lib/format.js'
 import { db } from '../db/index.js'
 
 const route = useRoute()
 const router = useRouter()
-const { products, settings } = useStore()
-const mode = ref(route.query.mode === 'products' ? 'products' : 'batch')
+const { products, settings, distributors, batches, batchProducts, overrides, productMap } = useStore()
+const mode = ref(['products', 'distributor'].includes(route.query.mode) ? route.query.mode : 'batch')
+const MODES = {
+  batch: { label: 'قائمة أسعار الشركة', desc: 'أسعار الشركة الرسمية (قبل الخصم) مع نسبة خصم الشركة للمذخر. تُنشئ قائمة أسعار جديدة.' },
+  distributor: { label: 'أسعار بيع مذخر للصيدليات', desc: 'الأسعار التي يبيع بها مذخر معيّن للصيدليات. تُسجَّل كمتابعات أسعار مرتبطة بقائمة أسعار موجودة.' },
+  products: { label: 'منتجات فقط', desc: 'إضافة أو تحديث بطاقات الأدوية دون أسعار أو خصومات.' },
+}
 const step = ref(1)
 
 const FIELDS = {
   name: { label: 'اسم المنتج', aliases: ['اسم الدواء', 'المنتج', 'الصنف', 'اسم الصنف', 'item', 'product', 'name', 'product name', 'trade name', 'الاسم التجاري'], required: true },
-  originalPrice: { label: 'السعر الأصلي', aliases: ['السعر', 'سعر', 'price', 'السعر الاصلي', 'سعر المستهلك', 'سعر الصيدلية', 'public price', 'retail'], required: true },
-  discount: { label: 'الخصم %', aliases: ['الخصم', 'خصم', 'discount', 'نسبة الخصم', 'disc', 'خصم الشركة'], batchOnly: true },
-  scientificName: { label: 'الاسم العلمي', aliases: ['scientific', 'generic', 'المادة الفعالة', 'scientific name'] },
-  manufacturer: { label: 'الشركة المصنعة', aliases: ['الشركة', 'المصنع', 'manufacturer', 'company'] },
+  originalPrice: { label: 'السعر الأصلي (قبل خصم الشركة)', aliases: ['السعر', 'سعر', 'price', 'السعر الاصلي', 'سعر المستهلك', 'public price', 'retail'], required: true, modes: ['batch', 'products'] },
+  sellingPrice: { label: 'سعر بيع المذخر للصيدلية', aliases: ['السعر', 'سعر البيع', 'سعر', 'price', 'سعر الصيدلية', 'selling price'], required: true, modes: ['distributor'] },
+  discount: { label: 'الخصم %', aliases: ['الخصم', 'خصم', 'discount', 'نسبة الخصم', 'disc', 'خصم الشركة'], modes: ['batch'] },
+  scientificName: { label: 'الاسم العلمي', aliases: ['scientific', 'generic', 'المادة الفعالة', 'scientific name'], modes: ['batch', 'products'] },
+  manufacturer: { label: 'الشركة المصنعة', aliases: ['الشركة', 'المصنع', 'manufacturer', 'company'], modes: ['batch', 'products'] },
   dosageForm: { label: 'نوع العلاج', aliases: ['الشكل الدوائي', 'الشكل', 'النوع', 'form', 'dosage form', 'type'] },
   packaging: { label: 'التغليف', aliases: ['نوع التغليف', 'الغلاف', 'مغلف', 'packaging', 'wrapped', 'wrap'] },
   packSize: { label: 'حجم العبوة', aliases: ['العبوة', 'pack', 'pack size', 'size'] },
-  group: { label: 'المجموعة الدوائية', aliases: ['المجموعة', 'group', 'category', 'الفئة'] },
+  group: { label: 'المجموعة الدوائية', aliases: ['المجموعة', 'group', 'category', 'الفئة'], modes: ['batch', 'products'] },
   notes: { label: 'ملاحظات', aliases: ['notes', 'ملاحظة'] },
 }
-const fields = computed(() => Object.entries(FIELDS).filter(([, f]) => mode.value === 'batch' || !f.batchOnly).map(([key, f]) => ({ key, ...f })))
+const fields = computed(() => Object.entries(FIELDS).filter(([, f]) => !f.modes || f.modes.includes(mode.value)).map(([key, f]) => ({ key, ...f })))
 
 /* 1. الملف */
 const fileName = ref('')
@@ -84,7 +91,7 @@ const parsed = computed(() => {
     errors.push(...validateOriginalPrice(price))
     if (mode.value === 'batch') errors.push(...validateDiscount(disc))
     // المغلف وغير المغلف منتجان مختلفان
-    const key = productKey({ name, packSize, packaging })
+    const key = productKey({ name, dosageForm, packSize, packaging })
     const dup = name && seen.has(key)
     seen.add(key)
     const existing = productIndex.value.get(key)
@@ -113,7 +120,10 @@ async function run() {
   try {
     const items = []
     let created = 0, updated = 0
-    for (const p of importable.value) {
+    const rows = importable.value.slice()
+    // معاملة واحدة لكل المنتجات: أسرع بكثير ولا تُحدَّث الواجهة إلا مرة واحدة في النهاية
+    await db.transaction('rw', db.products, async () => {
+    for (const p of rows) {
       let pid = p.existing?.id
       if (!pid) {
         pid = await saveProduct({ name: p.name, packSize: p.packSize, packaging: p.packaging, originalPrice: p.price, status: 'active', ...p.extra }, { allowDuplicate: true })
@@ -126,6 +136,7 @@ async function run() {
       }
       items.push({ productId: pid, originalPrice: p.price, companyDiscount: p.disc })
     }
+    })
     if (mode.value === 'products') {
       toast(`تم استيراد المنتجات: ${created} جديد${opts.updateExisting ? `، ${updated} محدَّث` : ''}`)
       router.push('/products')
@@ -137,17 +148,83 @@ async function run() {
   } catch (e) { toastError(e) } finally { running.value = false }
 }
 function reset() { step.value = 1; sheets.value = []; fileName.value = '' }
+
+/* ======== وضع: أسعار بيع مذخر للصيدليات ======== */
+const dm = reactive({ distributorId: null, newName: '', batchId: batches.value[0]?.id || null, date: todayISO(), source: 'invoice', notes: '' })
+const batchItems = computed(() => batchProducts.value.filter((b) => b.batchId === dm.batchId).map((b) => ({ ...b, product: productMap.value.get(b.productId) })).filter((b) => b.product))
+const batchIndex = computed(() => {
+  const exact = new Map(), loose = new Map()
+  for (const b of batchItems.value) {
+    exact.set(productKey(b.product), b)
+    const k = `${nameKey(b.product.name)}|${nameKey(b.product.dosageForm)}|${b.product.packaging || ''}`
+    loose.set(k, loose.has(k) ? null : b) // null = غير فريد
+  }
+  return { exact, loose }
+})
+const distParsed = computed(() => {
+  if (mode.value !== 'distributor') return []
+  const seen = new Set()
+  return dataRows.value.map((r, i) => {
+    const name = String(cell(r, 'name') ?? '').trim()
+    const dosageForm = String(cell(r, 'dosageForm') ?? '').trim()
+    const packSize = String(cell(r, 'packSize') ?? '').trim()
+    const packaging = parsePackaging(cell(r, 'packaging'))
+    const raw = cell(r, 'sellingPrice')
+    const price = toNumber(raw)
+    const base = { row: i + headerRow.value + 1, name, dosageForm, packaging, price, note: String(cell(r, 'notes') ?? '').trim() }
+    if (!name) return { ...base, status: 'error', msg: 'اسم فارغ' }
+    if (String(raw ?? '').trim() === '') return { ...base, status: 'empty', msg: 'لا يوجد سعر' }
+    if (!Number.isFinite(price) || price <= 0) return { ...base, status: 'error', msg: 'سعر غير صالح' }
+    const key = productKey({ name, dosageForm, packSize, packaging })
+    if (seen.has(key)) return { ...base, status: 'dup', msg: 'مكرر في الملف' }
+    seen.add(key)
+    const item = batchIndex.value.exact.get(key) || batchIndex.value.loose.get(`${nameKey(name)}|${nameKey(dosageForm)}|${packaging}`)
+    if (!item) return { ...base, status: 'nomatch', msg: 'المنتج غير موجود في قائمة الأسعار المختارة' }
+    const { discount } = resolveCompanyDiscount({ batchProduct: item, overrides: overrides.value, distributorId: dm.distributorId, productId: item.productId })
+    const res = computeDiscount({ originalPrice: item.originalPrice, companyDiscount: discount, sellingPrice: price })
+    return { ...base, status: 'ok', item, res }
+  })
+})
+const distSummary = computed(() => {
+  const s = { ok: 0, nomatch: 0, empty: 0, dup: 0, error: 0, alerts: 0 }
+  for (const p of distParsed.value) { s[p.status]++; if (p.res && (p.res.exceedsCompany || p.res.aboveOriginal)) s.alerts++ }
+  return s
+})
+const DSTATUS = { ok: ['جاهز للتسجيل', 'bg-green-50 text-green-700 ring-green-200'], nomatch: ['غير موجود في القائمة', 'bg-amber-50 text-amber-800 ring-amber-200'], empty: ['بدون سعر (يُتجاهل)', 'bg-slate-100 text-slate-500 ring-slate-200'], dup: ['مكرر (يُتجاهل)', 'bg-amber-50 text-amber-800 ring-amber-200'], error: ['خطأ (يُتجاهل)', 'bg-red-50 text-red-700 ring-red-200'], alerts: ['تنبيهات للتحقق', 'bg-red-50 text-red-700 ring-red-200'] }
+const distFilter = ref('')
+const distRows = computed(() => distParsed.value.filter((p) => !distFilter.value || (distFilter.value === 'alerts' ? p.res && (p.res.exceedsCompany || p.res.aboveOriginal) : p.status === distFilter.value)))
+const distReady = computed(() => (dm.distributorId || dm.newName.trim()) && dm.batchId && dm.date && distSummary.value.ok > 0)
+async function runDist() {
+  running.value = true
+  try {
+    let did = dm.distributorId
+    if (!did) did = await saveDistributor({ name: dm.newName.trim() })
+    let ok = 0, skipped = 0
+    for (const p of distParsed.value.filter((x) => x.status === 'ok')) {
+      try {
+        await addMonitoring({ distributorId: did, batchId: dm.batchId, productId: p.item.productId, sellingPrice: p.price, date: dm.date, source: dm.source, notes: p.note || dm.notes }, { user: settings.value.currentUser })
+        ok++
+      } catch (e) { if (e.code === 'duplicate') skipped++; else throw e }
+    }
+    toast(`تم تسجيل ${ok} سعر بيع${skipped ? ` (تم تجاهل ${skipped} مسجّل مسبقاً)` : ''}`)
+    router.push(`/distributors/${did}`)
+  } catch (e) { toastError(e) } finally { running.value = false }
+}
 </script>
 
 <template>
   <div class="space-y-4">
     <div class="flex flex-wrap items-end justify-between gap-3">
-      <div><h1 class="page-title">استيراد من Excel</h1><p class="page-sub">استيراد قائمة أسعار المعمل كإصدار جديد مستقل، أو استيراد بيانات المنتجات</p></div>
-      <div class="flex rounded-lg border border-slate-300 bg-white p-0.5 text-sm">
-        <button :class="['px-3 py-1.5 rounded-md', mode === 'batch' ? 'bg-brand-600 text-white' : 'text-slate-600']" :disabled="step > 1" @click="mode = 'batch'">قائمة أسعار</button>
-        <button :class="['px-3 py-1.5 rounded-md', mode === 'products' ? 'bg-brand-600 text-white' : 'text-slate-600']" :disabled="step > 1" @click="mode = 'products'">منتجات فقط</button>
-      </div>
+      <div><h1 class="page-title">استيراد من Excel</h1><p class="page-sub">اختر نوع الملف أولاً — كل نوع يُعامل بطريقة مختلفة</p></div>
     </div>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <button v-for="(m, k) in MODES" :key="k" :disabled="step > 1" @click="mode = k"
+        :class="['card p-4 text-right transition disabled:cursor-not-allowed', mode === k ? 'ring-2 ring-brand-500 border-brand-500' : 'hover:border-slate-300', step > 1 && mode !== k && 'opacity-50']">
+        <div class="flex items-center gap-2 font-semibold text-slate-800"><span :class="['w-4 h-4 rounded-full border-2', mode === k ? 'border-brand-600 bg-brand-600 ring-2 ring-white ring-inset' : 'border-slate-300']"></span>{{ m.label }}</div>
+        <p class="text-xs text-slate-500 mt-1.5 leading-5">{{ m.desc }}</p>
+      </button>
+    </div>
+    <div v-if="mode === 'distributor' && !batches.length" class="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-900">يجب أولاً استيراد «قائمة أسعار الشركة» حتى يُحسب الخصم المعكوس والمتبقي مقارنة بها.</div>
 
     <!-- مؤشر الخطوات -->
     <ol class="flex items-center gap-2 text-sm overflow-x-auto pb-1">
@@ -184,7 +261,8 @@ function reset() { step.value = 1; sheets.value = []; fileName.value = '' }
             <label class="label">{{ f.label }} <span v-if="f.required" class="text-red-500">*</span></label>
             <select v-model="mapping[f.key]" :class="['input', f.required && mapping[f.key] < 0 && 'input-err']"><option :value="-1">— غير موجود —</option><option v-for="(h, i) in headers" :key="i" :value="i">{{ h }}</option></select>
           </div>
-          <div v-if="mode === 'batch' && mapping.discount < 0" class="sm:col-span-2 lg:col-span-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">لا يوجد عمود للخصم — سيُطبق الخصم الافتراضي الذي تحدده في الخطوة التالية على جميع المنتجات.</div>
+          <div v-if="mode === 'batch' && mapping.discount < 0" class="sm:col-span-2 lg:col-span-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">لا يوجد عمود للخصم — سيُطبق الخصم الافتراضي الذي تحدده في الخطوة التالية على جميع المنتجات.
+            <b class="block mt-1">إذا كان هذا الملف أسعار بيع مذخر للصيدليات، فارجع واختر «أسعار بيع مذخر للصيدليات» بدلاً من «قائمة أسعار الشركة».</b></div>
         </div>
       </div>
       <div class="card">
@@ -195,8 +273,52 @@ function reset() { step.value = 1; sheets.value = []; fileName.value = '' }
       <div class="flex justify-between"><button class="btn-secondary" @click="reset"><ArrowRight class="w-4 h-4" />ملف آخر</button><button class="btn-primary" :disabled="!mappingOk" @click="step = 3">التالي: المراجعة<ArrowLeft class="w-4 h-4" /></button></div>
     </template>
 
+    <!-- 3: أسعار مذخر -->
+    <template v-if="step === 3 && mode === 'distributor'">
+      <div class="card">
+        <div class="card-h"><div class="card-t">بيانات المتابعة</div></div>
+        <div class="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div><label class="label">المذخر *</label>
+            <select v-model="dm.distributorId" class="input"><option :value="null">+ مذخر جديد</option><option v-for="d in distributors" :key="d.id" :value="d.id">{{ d.name }}</option></select>
+            <input v-if="!dm.distributorId" v-model="dm.newName" class="input mt-2" placeholder="اسم المذخر الجديد" /></div>
+          <div><label class="label">قائمة أسعار الشركة المرجعية *</label>
+            <select v-model="dm.batchId" class="input"><option :value="null" disabled>اختر</option><option v-for="b in batches" :key="b.id" :value="b.id">#{{ b.code }} — {{ b.name }} ({{ b.date }})</option></select>
+            <p class="text-xs text-slate-400 mt-1">منها يُؤخذ السعر الأصلي وخصم الشركة.</p></div>
+          <div><label class="label">تاريخ الأسعار *</label><input v-model="dm.date" type="date" class="input" /></div>
+          <div><label class="label">مصدر السعر</label><select v-model="dm.source" class="input"><option v-for="(l, k) in PRICE_SOURCES" :key="k" :value="k">{{ l }}</option></select></div>
+          <div class="sm:col-span-2 lg:col-span-4"><label class="label">ملاحظات</label><input v-model="dm.notes" class="input" /></div>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 md:grid-cols-6 gap-3">
+        <button v-for="(v, k) in distSummary" :key="k" @click="distFilter = distFilter === k ? '' : k" :class="['card p-3 text-right transition', distFilter === k && 'ring-2 ring-brand-300']">
+          <div class="text-xs text-slate-500">{{ DSTATUS[k][0] }}</div><div :class="['text-xl font-bold tabular-nums', k === 'alerts' && v && 'text-red-600']">{{ v }}</div>
+        </button>
+      </div>
+      <div class="card">
+        <div class="card-h"><div class="card-t">مراجعة الأسعار قبل التسجيل</div><span class="text-xs text-slate-500">سيتم تسجيل {{ distSummary.ok }} سعر</span></div>
+        <div class="overflow-x-auto max-h-[560px]">
+          <table class="tbl">
+            <thead class="sticky top-0"><tr><th>صف</th><th>المنتج</th><th>الحالة</th><th class="num">السعر الأصلي</th><th class="num">خصم الشركة</th><th class="num">سعر بيع المذخر</th><th class="num">المعكوس</th><th class="num">المتبقي</th></tr></thead>
+            <tbody><tr v-for="p in distRows" :key="p.row">
+              <td class="text-slate-400 tabular-nums">{{ p.row }}</td>
+              <td class="font-medium">{{ p.name }}<div class="text-xs text-slate-500">{{ p.dosageForm || 'نوع غير محدد' }} · {{ packagingLabel(p.packaging) }}</div></td>
+              <td><span :class="['badge', DSTATUS[p.status][1]]">{{ DSTATUS[p.status][0] }}</span><div v-if="p.res && p.res.exceedsCompany" class="text-xs text-red-600 mt-0.5">المعكوس أكبر من خصم الشركة بـ {{ fmtMoney(p.res.exceedPoints) }} نقطة</div><div v-else-if="p.res && p.res.aboveOriginal" class="text-xs text-red-600 mt-0.5">سعر البيع أعلى من السعر الأصلي — تحقق</div></td>
+              <td class="num">{{ p.item ? fmtMoney(p.item.originalPrice) : '—' }}</td>
+              <td class="num">{{ p.res ? fmtPct(p.res.companyDiscount) : '—' }}</td>
+              <td class="num font-semibold">{{ Number.isFinite(p.price) ? fmtMoney(p.price) : '—' }}</td>
+              <td class="num">{{ p.res ? fmtPct(p.res.pharmacyDiscountPct) : '—' }}</td>
+              <td :class="['num font-semibold', p.res && p.res.remainingDiscountPct < 0 ? 'text-red-600' : 'text-teal-700']">{{ p.res ? fmtPct(p.res.remainingDiscountPct) : '—' }}</td>
+            </tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="rounded-lg bg-slate-100 p-3 text-sm text-slate-600 flex gap-2"><CheckCircle2 class="w-5 h-5 text-teal-600 shrink-0" />تُسجَّل الأسعار كمتابعات لهذا المذخر. لا تُعدَّل قائمة أسعار الشركة ولا أي سعر سابق.</div>
+      <div class="flex justify-between"><button class="btn-secondary" @click="step = 2"><ArrowRight class="w-4 h-4" />رجوع</button>
+        <button class="btn-primary" :disabled="running || !distReady" @click="runDist"><CheckCircle2 class="w-4 h-4" />تسجيل الأسعار ({{ distSummary.ok }})</button></div>
+    </template>
+
     <!-- 3 -->
-    <template v-if="step === 3">
+    <template v-if="step === 3 && mode !== 'distributor'">
       <div v-if="mode === 'batch'" class="card">
         <div class="card-h"><div class="card-t">بيانات قائمة الأسعار الجديدة</div></div>
         <div class="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">

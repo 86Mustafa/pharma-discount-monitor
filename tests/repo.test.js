@@ -102,7 +102,7 @@ describe('نوع العلاج والتغليف', () => {
   it('المغلف وغير المغلف منتجان مختلفان وليسا تكراراً', async () => {
     await repo.saveProduct({ name: 'باراسيتامول', originalPrice: 2500, dosageForm: 'حبوب', packaging: 'wrapped' })
     await repo.saveProduct({ name: 'باراسيتامول', originalPrice: 2000, dosageForm: 'حبوب', packaging: 'unwrapped' })
-    await expect(repo.saveProduct({ name: 'باراسيتامول', originalPrice: 2100, packaging: 'unwrapped' })).rejects.toThrow('يوجد منتج')
+    await expect(repo.saveProduct({ name: 'باراسيتامول', originalPrice: 2100, dosageForm: 'حبوب', packaging: 'unwrapped' })).rejects.toThrow('يوجد منتج')
     const all = await db.products.toArray()
     expect(all.map((p) => p.packaging).sort()).toEqual(['unwrapped', 'wrapped'])
     expect(displayName(all.find((p) => p.packaging === 'unwrapped'))).toBe('باراسيتامول (بدون غلاف)')
@@ -122,5 +122,14 @@ describe('نوع العلاج والتغليف', () => {
     expect(parsePackaging('بدون غلاف')).toBe('unwrapped')
     expect(parsePackaging('غير مغلف')).toBe('unwrapped')
     expect(parsePackaging('')).toBe('')
+  })
+})
+
+describe('مفتاح المنتج يشمل نوع العلاج', () => {
+  it('بتنوسام كريم وبتنوسام مرهم منتجان مختلفان', async () => {
+    await repo.saveProduct({ name: 'بتنوسام', originalPrice: 790, dosageForm: 'كريم', packaging: 'unwrapped' })
+    await repo.saveProduct({ name: 'بتنوسام ', originalPrice: 790, dosageForm: 'مرهم', packaging: 'unwrapped' })
+    expect(await db.products.count()).toBe(2)
+    await expect(repo.saveProduct({ name: 'بتنوسام', originalPrice: 800, dosageForm: 'كريم', packaging: 'unwrapped' })).rejects.toThrow('يوجد منتج')
   })
 })

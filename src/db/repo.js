@@ -65,11 +65,14 @@ export async function setSetting(key, value) {
 
 export const PRODUCT_STATUS = { active: 'فعّال', inactive: 'غير فعّال', discontinued: 'متوقف' }
 
-/** مفتاح التكرار: الاسم + حجم العبوة + نوع التغليف (المغلف وغير المغلف منتجان مختلفان) */
-export const productKey = (p) => `${nameKey(p.name)}|${nameKey(p.packSize)}|${p.packaging || ''}`
+/**
+ * مفتاح التكرار: الاسم + نوع العلاج + حجم العبوة + نوع التغليف.
+ * (بتنوسام كريم ≠ بتنوسام مرهم، والمغلف ≠ غير المغلف)
+ */
+export const productKey = (p) => `${nameKey(p.name)}|${nameKey(p.dosageForm)}|${nameKey(p.packSize)}|${p.packaging || ''}`
 
-export async function findDuplicateProduct({ name, packSize, packaging }, excludeId) {
-  const key = productKey({ name, packSize, packaging })
+export async function findDuplicateProduct(input, excludeId) {
+  const key = productKey(input)
   const all = await db.products.toArray()
   return all.find((p) => p.id !== excludeId && productKey(p) === key) || null
 }
@@ -80,8 +83,8 @@ export async function saveProduct(input, { allowDuplicate = false } = {}) {
   const priceErr = validateOriginalPrice(input.originalPrice)
   if (priceErr.length) throw new ValidationError(priceErr[0])
   if (!allowDuplicate) {
-    const dup = await findDuplicateProduct({ name, packSize: input.packSize, packaging: input.packaging }, input.id)
-    if (dup) throw new ValidationError(`يوجد منتج بنفس الاسم وحجم العبوة ونوع التغليف: «${dup.name}»`, 'duplicate')
+    const dup = await findDuplicateProduct({ ...input, name }, input.id)
+    if (dup) throw new ValidationError(`يوجد منتج بنفس الاسم ونوع العلاج وحجم العبوة والتغليف: «${dup.name}»`, 'duplicate')
   }
   const record = {
     // الاسم يُحفظ كما أُدخل حرفياً (بعد إزالة المسافات الطرفية فقط)
